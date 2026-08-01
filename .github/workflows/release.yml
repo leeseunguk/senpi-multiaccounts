@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Report toolchain
+        run: |
+          node --version
+          npm --version
+
+      # `npm ci` is unusable here: @code-yeongyu/senpi bundles dependencies that
+      # npm install and npm ci disagree about, so a freshly generated lockfile
+      # still fails the ci sync check.
+      - run: npm install
+
+      # A tag push and a workflow_dispatch can both reach the same version, and npm
+      # rejects the second attempt with a hard error. Deciding here keeps a retried
+      # or overlapping release green instead of failing on a version that is done.
+      - name: Check whether this version is already published
+        id: guard
+        run: node scripts/publish-guard.mjs
+
+      - name: Publish with OIDC trusted publishing
+        if: steps.guard.outputs.publish == 'true'
+        run: npm publish

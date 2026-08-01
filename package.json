@@ -1,0 +1,54 @@
+{
+  "name": "@eddieparc/senpi-multiaccounts",
+  "version": "0.1.0",
+  "description": "Senpi addon: multi-account subscriptions for Claude, OpenAI Codex and Kiro \u2014 per-account usage, cache-preserving routing, usage-aware placement and 429 failover.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eddieparc/senpi-multiaccounts.git"
+  },
+  "homepage": "https://github.com/eddieparc/senpi-multiaccounts#readme",
+  "bugs": {
+    "url": "https://github.com/eddieparc/senpi-multiaccounts/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "senpi",
+    "senpi-extension",
+    "claude",
+    "openai-codex",
+    "kiro",
+    "multi-account",
+    "provider-accounts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepare": "[ -f tsconfig.build.json ] && npm run build || exit 0",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "@code-yeongyu/senpi": ">=2026.7.28"
+  },
+  "devDependencies": {
+    "@code-yeongyu/senpi": "^2026.7.29",
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "kiro": {
+    "name": "Kiro (local gateway)",
+    "baseUrl": "http://127.0.0.1:8000/v1",
+    "apiKey": "$KIRO_GATEWAY_API_KEY",
+    "api": "openai-completions",
+    "authHeader": false,
+    "headers": {
+      "x-api-key": "$KIRO_GATEWAY_API_KEY"
+    },
+    "models": [
+      {
+        "id": "claude-haiku-4.5",
+        "name": "Claude Haiku 4.5",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 200000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-opus-4.5",
+        "name": "Claude Opus 4.5",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 200000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-opus-4.6",
+        "name": "Claude Opus 4.6",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 1000000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-opus-4.7",
+        "name": "Claude Opus 4.7",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 1000000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-opus-4.8",
+        "name": "Claude Opus 4.8",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 1000000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-opus-5",
+        "name": "Claude Opus 5",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 1000000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-sonnet-4.5",
+        "name": "Claude Sonnet 4.5",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 200000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-sonnet-4.6",
+        "name": "Claude Sonnet 4.6",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 200000,
+        "maxTokens": 16384
+      },
+      {
+        "id": "claude-sonnet-5",
+        "name": "Claude Sonnet 5",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 1000000,
+        "maxTokens": 16384
+      }
+    ]
+  }
+}

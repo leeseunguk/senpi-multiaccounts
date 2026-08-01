@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # Same reason as the release workflow: @code-yeongyu/senpi bundles dependencies
+      # that `npm ci` reports as missing from a lockfile npm itself just wrote.
+      - run: npm install
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - run: npm run build
