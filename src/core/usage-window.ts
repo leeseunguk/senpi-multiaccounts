@@ -13,6 +13,8 @@
  * next request.
  */
 
+import type { AccountSlot } from "./accounts.js";
+
 export interface UsageWindow {
 	/** Short label shown in the dashboard, e.g. `5h`, `week`, `Fable`. */
 	label: string;
@@ -20,6 +22,14 @@ export interface UsageWindow {
 	usedFraction: number;
 	/** Epoch millis at which this window resets, when the upstream says. */
 	resetsAt?: number;
+	/**
+	 * Whether the window meters one model family rather than the subscription.
+	 *
+	 * A spent scoped window (Fable at 100%) refuses only that family; the account
+	 * still serves every other model. Blocking the whole slot on it would retire a
+	 * working subscription, so exhaustion gating ignores scoped windows.
+	 */
+	scoped?: boolean;
 }
 
 export interface AccountUsage {
@@ -28,13 +38,46 @@ export interface AccountUsage {
 	plan?: string;
 	/** Account identity, so a slot name that lies is still diagnosable. */
 	email?: string;
+	/** True when the vendor refresh failed and a persisted snapshot is shown. */
+	stale?: boolean;
 }
 
 /** Remaining headroom, 0..1, from the tightest window. Undefined when unknown. */
 export function headroomOf(usage: AccountUsage | undefined): number | undefined {
 	if (!usage || usage.windows.length === 0) return undefined;
-	const worst = Math.max(...usage.windows.map((window) => window.usedFraction));
+	const unscoped = usage.windows.filter((window) => !window.scoped);
+	if (unscoped.length === 0) return undefined;
+	const worst = Math.max(...unscoped.map((window) => window.usedFraction));
 	return Math.min(1, Math.max(0, 1 - worst));
+}
+
+/**
+ * Synchronize the persisted routing block with authoritative quota windows.
+ *
+ * A model-scoped limit must never retire the whole subscription. For global
+ * limits, the account stays blocked until every exhausted window has reset,
+ * hence the latest reset wins. A later successful refresh clears quota blocks
+ * but never overrides auth, rate-limit, or server-error state.
+ */
+export function syncQuotaBlock(account: AccountSlot, usage: AccountUsage | undefined, now = Date.now()): AccountSlot {
+	const resetTimes =
+		usage?.windows
+			.filter(
+				(window) =>
+					!window.scoped &&
+					window.usedFraction >= 1 &&
+					window.resetsAt !== undefined &&
+					window.resetsAt > now,
+			)
+			.map((window) => window.resetsAt as number) ?? [];
+
+	if (resetTimes.length > 0 && account.blockReason !== "auth_error") {
+		return { ...account, blockReason: "quota", blockedUntil: Math.max(...resetTimes) };
+	}
+
+	if (account.blockReason !== "quota") return account;
+	const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...available } = account;
+	return available;
 }
 
 export function clampFraction(percent: number): number {
@@ -82,5 +125,6 @@ export function formatWindow(window: UsageWindow, now = Date.now()): string {
 
 /** Render every window of one account, e.g. `7% 5h 4h 7m · 38% week 5d · 51% Fable 5d`. */
 export function formatUsage(usage: AccountUsage, now = Date.now()): string {
-	return usage.windows.map((window) => formatWindow(window, now)).join(" · ");
+	const windows = usage.windows.map((window) => formatWindow(window, now)).join(" · ");
+	return usage.stale ? `${windows} · stale` : windows;
 }

@@ -41,7 +41,7 @@ describe("claude usage parsing", () => {
 			),
 		};
 
-		expect(parseClaudeUsage(renamed).windows.at(-1)?.label).toBe("Opus");
+		expect(parseClaudeUsage(renamed).windows.at(-1)).toMatchObject({ label: "Opus", scoped: true });
 	});
 
 	// The exhausted account that read as plain "available" before this work.
@@ -55,10 +55,10 @@ describe("claude usage parsing", () => {
 		expect(headroomOf(exhausted)).toBe(0);
 	});
 
-	it("takes headroom from the tightest window, not the average", () => {
+	it("takes global headroom from the tightest unscoped window", () => {
 		const usage = parseClaudeUsage(LIVE_RESPONSE);
 
-		expect(headroomOf(usage)).toBeCloseTo(0.49, 5);
+		expect(headroomOf(usage)).toBeCloseTo(0.62, 5);
 	});
 
 	it("returns no windows rather than throwing on an empty payload", () => {

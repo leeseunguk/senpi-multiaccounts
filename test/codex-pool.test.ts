@@ -60,10 +60,14 @@ describe("codex-pool provider registration", () => {
 		expect(typeof config.streamSimple).toBe("function");
 	});
 
-	it("stays opt-in so stock openai-codex remains the default", () => {
+	it("stays opt-in until a managed pool already exists", () => {
 		const pkg = codexProviderPackage();
 		expect(pkg.enabled?.({} as NodeJS.ProcessEnv)).toEqual(expect.stringContaining("SENPI_ACCOUNTS_CODEX_POOL"));
 		expect(pkg.enabled?.({ SENPI_ACCOUNTS_CODEX_POOL: "1" } as NodeJS.ProcessEnv)).toBe(true);
+
+		const agentDir = mkdtempSync(join(tmpdir(), "codex-pool-enabled-"));
+		writePool(agentDir, "codex-pool", poolWith("existing"));
+		expect(pkg.enabled?.({} as NodeJS.ProcessEnv, { env: {} as NodeJS.ProcessEnv, agentDir })).toBe(true);
 	});
 
 	it("narrows the catalog via SENPI_ACCOUNTS_CODEX_MODELS", () => {

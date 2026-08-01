@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildUsageReport } from "../src/core/usage.js";
 import { claudeProviderPackage } from "../src/providers/claude/index.js";
+import { updateClaudePool } from "../src/providers/claude/store.js";
 
 /**
- * The reported defect: `/usage` printed `claude-agent-sdk  3/3 accounts
+ * The reported defect: `/usage` printed `claude-sdk-oauth  3/3 accounts
  * available` while one of those three accounts sat at 100% of its weekly
  * window. A slot count cannot answer "how much have I got left", which is the
  * one question the command exists for.
@@ -36,7 +37,7 @@ function usageBody(fiveHour: number, weekly: number, scoped: number) {
 
 function sandbox(pool: unknown): string {
 	const dir = mkdtempSync(join(tmpdir(), "senpi-claude-usage-"));
-	writeFileSync(join(dir, "auth.json"), JSON.stringify({ "claude-agent-sdk": pool }));
+	writeFileSync(join(dir, "auth.json"), JSON.stringify({ "claude-sdk-oauth": pool }));
 	return dir;
 }
 
@@ -98,8 +99,8 @@ describe("claude per-account usage in the dashboard", () => {
 
 		const report = await buildUsageReport([pkg], ctx(dir));
 
-		expect(report).toContain("claude-agent-sdk");
-		expect(report).toContain("available");
+		expect(report).toContain("claude-sdk-oauth");
+		expect(report).toContain("usage unavailable, available");
 	});
 
 	it("skips the pool entirely when stock has no claude credential", async () => {
@@ -107,7 +108,7 @@ describe("claude per-account usage in the dashboard", () => {
 		writeFileSync(join(dir, "auth.json"), JSON.stringify({}));
 		const pkg = claudeProviderPackage({ fetchUsage: fetchUsageFor as never });
 
-		expect(pkg.enabled?.({} as NodeJS.ProcessEnv, ctx(dir))).toMatch(/no claude-agent-sdk credential/);
+		expect(pkg.enabled?.({} as NodeJS.ProcessEnv, ctx(dir))).toMatch(/no claude-sdk-oauth credential/);
 	});
 
 	/**
@@ -127,9 +128,75 @@ describe("claude per-account usage in the dashboard", () => {
 
 		await pkg.accountUsageDetail?.(ctx(dir));
 
-		const stored = JSON.parse(readFileSync(join(dir, "auth.json"), "utf8"))["claude-agent-sdk"];
+		const stored = JSON.parse(readFileSync(join(dir, "auth.json"), "utf8"))["claude-sdk-oauth"];
 		expect(stored.accounts[0]).toMatchObject({ access: "new", refresh: "new-r" });
 		expect(stored.access).toBe("claude-sdk-oauth-managed");
 		expect(stored.expires).toBe(4_102_444_800_000);
+	});
+
+	it("persists an exhausted weekly window as a routing block", async () => {
+		const dir = sandbox(THREE_SLOTS);
+		const pkg = claudeProviderPackage({ fetchUsage: fetchUsageFor as never });
+
+		const line = (await buildUsageReport([pkg], ctx(dir)))
+			.split("\n")
+			.find((candidate) => candidate.includes("jgplabs01"));
+		const stored = JSON.parse(readFileSync(join(dir, "auth.json"), "utf8"))["claude-sdk-oauth"];
+		const exhausted = stored.accounts.find((slot: { name: string }) => slot.name === "jgplabs01");
+
+		expect(line).toContain("(quota)");
+		expect(exhausted).toMatchObject({ blockReason: "quota" });
+		expect(exhausted.blockedUntil).toBeGreaterThan(Date.now());
+	});
+
+	it("reports environment accounts without persisting their OAuth token", async () => {
+		const dir = sandbox({ ...THREE_SLOTS, accounts: [] });
+		const environment = { CLAUDE_CODE_OAUTH_TOKEN: "environment-secret" } as NodeJS.ProcessEnv;
+		const pkg = claudeProviderPackage({
+			fetchUsage: (async () => ({
+				windows: [{ label: "week", usedFraction: 0.2, resetsAt: Date.now() + 60_000 }],
+			})) as never,
+		});
+
+		const report = await buildUsageReport([pkg], { env: environment, agentDir: dir });
+		const stored = readFileSync(join(dir, "auth.json"), "utf8");
+
+		expect(report).toContain("claude-sdk-oauth  env: 20% week");
+		expect(stored).not.toContain("environment-secret");
+	});
+
+	it("removes stale slot state when a stored account is logged out", () => {
+		const dir = sandbox({
+			...THREE_SLOTS,
+			accounts: [THREE_SLOTS.accounts[0]],
+			pinned: "default",
+			slotState: { default: { blockedUntil: 123, blockReason: "quota" } },
+		});
+
+		updateClaudePool(dir, () => ({ accounts: [] }));
+		const stored = JSON.parse(readFileSync(join(dir, "auth.json"), "utf8"))["claude-sdk-oauth"];
+
+		expect(stored.accounts).toEqual([]);
+		expect(stored).not.toHaveProperty("pinned");
+		expect(stored).not.toHaveProperty("slotState");
+	});
+
+	it("notifies stock account consumers after a pool mutation", () => {
+		const dir = sandbox({ ...THREE_SLOTS, accounts: [THREE_SLOTS.accounts[0]] });
+		const symbol = Symbol.for("senpi.provider-account-events.emit.v1");
+		const eventGlobal = globalThis as typeof globalThis & {
+			[symbol]?: (event: unknown) => void;
+		};
+		const previous = eventGlobal[symbol];
+		const events: unknown[] = [];
+		eventGlobal[symbol] = (event) => events.push(event);
+		try {
+			updateClaudePool(dir, (pool) => pool);
+		} finally {
+			if (previous) eventGlobal[symbol] = previous;
+			else delete eventGlobal[symbol];
+		}
+
+		expect(events).toEqual([{ type: "accounts_changed", provider: "claude-sdk-oauth" }]);
 	});
 });

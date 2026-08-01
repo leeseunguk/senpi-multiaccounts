@@ -68,13 +68,13 @@ function scopedWeeklyWindow(body: JsonRecord): UsageWindow | undefined {
 		const name = record(record(limit.scope)?.model)?.display_name;
 		const label = typeof name === "string" && name.trim() !== "" ? name.trim() : "scoped";
 		const window = toWindow(limit, label);
-		if (window) return window;
+		if (window) return { ...window, scoped: true };
 	}
-	return (
+	const legacy =
 		toWindow(body.fable_weekly, "Fable") ??
 		toWindow(body.seven_day_opus, "Opus") ??
-		toWindow(body.seven_day_sonnet, "Sonnet")
-	);
+		toWindow(body.seven_day_sonnet, "Sonnet");
+	return legacy ? { ...legacy, scoped: true } : undefined;
 }
 
 export function parseClaudeUsage(body: unknown): AccountUsage {

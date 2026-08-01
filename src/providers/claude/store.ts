@@ -1,9 +1,10 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AccountSlot } from "../../core/accounts.js";
+import { notifyProviderAccountsChanged } from "../../core/account-events.js";
 
 /**
- * Read and write stock senpi's `claude-agent-sdk` account pool.
+ * Read and write stock senpi's `claude-sdk-oauth` account pool.
  *
  * This pool is owned by stock, not by this addon: stock mints the tokens, does
  * the streaming and the failover. The addon only observes it and edits the
@@ -15,15 +16,18 @@ import type { AccountSlot } from "../../core/accounts.js";
  * preserves the record's existing fields verbatim and touches nothing else.
  */
 
-export const CLAUDE_SDK_PROVIDER_ID = "claude-agent-sdk";
+export const CLAUDE_SDK_PROVIDER_ID = "claude-sdk-oauth";
 
 export interface ClaudeSlotState {
 	blockedUntil?: number;
-	blockReason?: string;
+	blockReason?: AccountSlot["blockReason"];
 }
 
 export interface ClaudeStoredPool {
 	type: string;
+	access: string;
+	refresh: string;
+	expires: number;
 	accounts?: AccountSlot[];
 	pinned?: string;
 	slotState?: Record<string, ClaudeSlotState>;
@@ -72,11 +76,23 @@ function storedPool(agentDir: string, providerId: string): ClaudeStoredPool | un
 	return entry as ClaudeStoredPool;
 }
 
+/** Full stock credential for OAuth registration and account-management flows. */
+export function readClaudeCredential(
+	agentDir: string,
+	providerId = CLAUDE_SDK_PROVIDER_ID,
+): ClaudeStoredPool | undefined {
+	return storedPool(agentDir, providerId);
+}
+
 /**
  * Slots as stock resolves them: an env-sourced slot carries its block state in
  * `slotState` rather than on the slot itself, so the two are merged here.
  */
-export function readClaudePool(agentDir: string, providerId = CLAUDE_SDK_PROVIDER_ID): ClaudePoolView {
+export function readClaudePool(
+	agentDir: string,
+	providerId = CLAUDE_SDK_PROVIDER_ID,
+	env: NodeJS.ProcessEnv = process.env,
+): ClaudePoolView {
 	const stored = storedPool(agentDir, providerId);
 	if (!stored) return { accounts: [], present: false };
 
@@ -85,6 +101,22 @@ export function readClaudePool(agentDir: string, providerId = CLAUDE_SDK_PROVIDE
 		const persisted = slotState[slot.name];
 		return persisted ? ({ ...slot, ...persisted } as AccountSlot) : slot;
 	});
+	const environmentNames = [{ variable: "CLAUDE_CODE_OAUTH_TOKEN", name: "env" }];
+	for (let index = 2; index <= 16; index++) {
+		environmentNames.push({ variable: `CLAUDE_CODE_OAUTH_TOKEN_${index}`, name: `env-${index}` });
+	}
+	for (const { variable, name } of environmentNames) {
+		const access = env[variable];
+		if (!access) continue;
+		accounts.push({
+			name,
+			access,
+			refresh: "",
+			expires: Number.MAX_SAFE_INTEGER,
+			source: "env",
+			...slotState[name],
+		});
+	}
 
 	const view: ClaudePoolView = { accounts, present: true };
 	if (typeof stored.pinned === "string") view.pinned = stored.pinned;
@@ -106,10 +138,30 @@ export function updateClaudePool(
 	const current = readClaudePool(agentDir, providerId);
 	const next = update(current);
 	const stored = { ...(existing as ClaudeStoredPool) };
-	stored.accounts = next.accounts;
+	const storedAccounts = next.accounts.filter((slot) => slot.source !== "env");
+	const removedStoredNames = new Set(
+		(stored.accounts ?? [])
+			.filter((slot) => !storedAccounts.some((candidate) => candidate.name === slot.name))
+			.map((slot) => slot.name),
+	);
+	stored.accounts = storedAccounts;
+	const slotState = { ...(stored.slotState ?? {}) };
+	for (const name of removedStoredNames) delete slotState[name];
+	for (const slot of next.accounts.filter((candidate) => candidate.source === "env")) {
+		if (slot.blockedUntil === undefined && slot.blockReason === undefined) delete slotState[slot.name];
+		else {
+			slotState[slot.name] = {
+				...(slot.blockedUntil === undefined ? {} : { blockedUntil: slot.blockedUntil }),
+				...(slot.blockReason === undefined ? {} : { blockReason: slot.blockReason }),
+			};
+		}
+	}
+	if (Object.keys(slotState).length === 0) delete stored.slotState;
+	else stored.slotState = slotState;
 	if (next.pinned === undefined) delete stored.pinned;
 	else stored.pinned = next.pinned;
 
 	data[providerId] = stored;
 	writeAuthFile(agentDir, data);
+	notifyProviderAccountsChanged(providerId);
 }

@@ -38,7 +38,8 @@ fills only the gaps stock leaves.
 | **OpenGateway** provider (Kimi K3 Ultrafast) | shipped | this addon |
 | **OpenAI Codex account pool** with live per-account quota | **shipped, live-verified** | this addon |
 | **Claude per-account usage** (5h / weekly / model-scoped windows) | **shipped, live-verified** | this addon |
-| Claude `pin` / `unblock` / `logout all` via `/claude-accounts` | shipped | this addon |
+| Claude account manager in provider configuration, plus `/claude-accounts` | shipped | local senpi patch + this addon |
+| Quota exhaustion blocks routing until the vendor reset | shipped | this addon |
 | Anthropic account pool, streaming and failover | stock | `/claude-account` |
 | Alibaba Token Plan, OpenCode Go | stock | API-key providers |
 
@@ -68,7 +69,7 @@ Both were reported upstream rather than worked around here:
 
 ## Install
 
-Requires senpi `>= 2026.7.28` (verified against `2026.7.30`).
+Requires senpi `>= 2026.8.1`.
 
 **One command** — from the npm registry:
 
@@ -104,17 +105,17 @@ Then either load it per-run (substitute your own checkout path):
 senpi -e /absolute/path/to/senpi-multiaccounts
 ```
 
-or enable it for every session by adding the built entry point to `extensions` in
-`~/.senpi/agent/settings.json`:
+or let senpi add the local package to its user settings:
 
-```json
-{
-  "extensions": ["/absolute/path/to/senpi-multiaccounts/dist/index.js"]
-}
+```bash
+senpi remove npm:@eddieparc/senpi-accounts
+senpi install /absolute/path/to/senpi-multiaccounts/dist/index.js
 ```
 
-Point at `dist/index.js`, not the repository root. senpi enumerates a bare
-directory and would load `dist/` and `src/` as two separate extensions.
+The first command removes the former Kiro-only package. Keeping both packages
+loaded would register the same provider and `/usage` command twice. Install the
+built entry point, not the repository root: senpi enumerates a bare directory
+and would otherwise load `dist/` and `src/` as separate extensions.
 
 Verify it loaded — this should print the Kiro models:
 
@@ -246,10 +247,11 @@ is unverified end to end; stock already lists its models (`deepseek-v4-pro`, `gl
 
 ## Claude (Anthropic)
 
-The account pool itself is stock: senpi mints the tokens, streams through the Claude
-Agent SDK and fails over on its own, and `/claude-account add` is still how an account
-is added. This addon does **not** re-implement any of that. What it adds is the part
-stock never had — seeing the pool, and steering it:
+The account pool itself is stock: senpi streams through the Claude Agent SDK and
+fails over on its own. The accompanying local senpi patch makes the stock
+`claude-sdk-oauth` OAuth entry open an account manager when accounts already
+exist, just like Kiro. Add, per-account logout, full logout, pin and unblock are
+all available there. The same controls remain scriptable through this addon:
 
 ```
 /claude-accounts                      # list with live per-account usage
@@ -272,14 +274,19 @@ Measured across three live accounts:
 
 ```
 Subscription usage:
-  claude-agent-sdk  default:    7% 5h 4h 7m · 38% week 4d 22h · 51% Fable 4d 22h — available
-  claude-agent-sdk  jgplabs:    0% 5h · 7% week 5d 1h · 4% Fable 5d 1h — available
-  claude-agent-sdk  jgplabs01:  14% 5h 3h 57m · 100% week 3d 15h · 100% Fable 3d 15h — available
+  claude-sdk-oauth  default:    7% 5h 4h 7m · 38% week 4d 22h · 51% Fable 4d 22h — available
+  claude-sdk-oauth  jgplabs:    0% 5h · 7% week 5d 1h · 4% Fable 5d 1h — available
+  claude-sdk-oauth  jgplabs01:  14% 5h 3h 57m · 100% week 3d 15h · 100% Fable 3d 15h — blocked (quota)
 ```
 
 `jgplabs01` is the case that motivated this: its weekly window is fully spent, and the
 old dashboard reported the pool as `3/3 accounts available`. A slot count cannot answer
 "how much have I got left", which is the one question `/usage` exists for.
+
+An exhausted unscoped window is persisted as `blockReason: "quota"` until its
+vendor-provided reset timestamp. Kiro, Claude and Codex therefore stop routing to
+zero-remaining accounts before a request fails. A Fable-only exhausted window is
+model-scoped and does not retire the whole Claude subscription.
 
 An expired access token answers the usage endpoint with HTTP 401, which would read as
 "headroom unknown" and silently drop the account from the dashboard, so a stale slot is
