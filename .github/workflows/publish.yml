@@ -20,5 +20,7 @@ jobs:
           node-version: "24.15.0"
           registry-url: "https://registry.npmjs.org"
           cache: npm
-      - run: npm ci
+      # Senpi ships bundled dependencies that npm omits from the generated lockfile,
+      # so npm ci rejects the same lockfile that npm install can resolve.
+      - run: npm install
       - run: npm publish --access public --provenance
