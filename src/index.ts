@@ -79,8 +79,22 @@ export default async function senpiAccounts(pi: SenpiExtensionAPI): Promise<void
 
 	// A provider stream has no ExtensionContext of its own, so the newest session
 	// context is captured here and migration notices are delivered through it.
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		migrationSink.attach(ctx);
+		// Prime provider usage before the first turn. Besides warming the dashboard,
+		// each package persists authoritative quota blocks so an exhausted slot is
+		// never selected merely because no request has failed on it yet.
+		await Promise.all(
+			registered.map(async (entry) => {
+				try {
+					if (entry.accountUsageDetail) await entry.accountUsageDetail(context);
+					else await entry.accountUsage?.(context);
+				} catch {
+					// Usage is advisory when the endpoint is unavailable; provider
+					// request paths retain their normal failure classification.
+				}
+			}),
+		);
 	});
 
 	pi.registerCommand("usage", {

@@ -40,7 +40,7 @@ describe("usage dashboard", () => {
 
 	it("counts available accounts for stock multi-account pools", async () => {
 		const dir = sandbox({
-			"claude-agent-sdk": {
+			"claude-sdk-oauth": {
 				type: "oauth",
 				accounts: [
 					{ name: "default" },

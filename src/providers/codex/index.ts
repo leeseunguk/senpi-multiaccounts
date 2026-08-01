@@ -17,7 +17,8 @@ import type { SchedulingMode } from "../../core/affinity.js";
 import { migrationSink } from "../../core/migration-sink.js";
 import { emptyPool, readPool, type StoredPool, updatePool } from "../../core/store.js";
 import type { ProviderBuildContext, ProviderConfig, ProviderPackage } from "../../core/types.js";
-import { type AccountUsage, headroomOf } from "../../core/usage-window.js";
+import { createAccountUsageCache, type AccountUsageCache } from "../../core/usage-detail-cache.js";
+import { type AccountUsage, headroomOf, syncQuotaBlock } from "../../core/usage-window.js";
 import { resolveCodexModels } from "./models.js";
 import { type CodexTokens, loginCodex, refreshCodex } from "./oauth.js";
 import { createCodexStreamSimple } from "./stream.js";
@@ -304,7 +305,11 @@ async function accountManager(agentDir: string, callbacks: LoginCallbacks): Prom
  * unknown" and silently drop the account from `balanced` placement, so the slot
  * is refreshed first and the rotated pair persisted before the probe.
  */
-async function readCodexSlotUsage(agentDir: string, name: string): Promise<AccountUsage | undefined> {
+async function readCodexSlotUsage(
+	agentDir: string,
+	name: string,
+	cache: AccountUsageCache,
+): Promise<AccountUsage | undefined> {
 	const slot = readPool(agentDir, CODEX_POOL_PROVIDER_ID).accounts.find((candidate) => candidate.name === name);
 	if (!slot) return undefined;
 
@@ -328,28 +333,49 @@ async function readCodexSlotUsage(agentDir: string, name: string): Promise<Accou
 	}
 
 	try {
-		return await fetchCodexUsage(access, accountId);
+		return await cache.get(name, `${access}:${accountId ?? ""}`, () => fetchCodexUsage(access, accountId));
 	} catch {
 		return undefined;
 	}
 }
 
-async function readCodexPoolUsage(context: ProviderBuildContext): Promise<Record<string, AccountUsage | undefined>> {
+async function readCodexPoolUsage(
+	context: ProviderBuildContext,
+	cache: AccountUsageCache,
+): Promise<Record<string, AccountUsage | undefined>> {
 	const pool = readPool(context.agentDir, CODEX_POOL_PROVIDER_ID);
 	const entries = await Promise.all(
-		pool.accounts.map(async (slot) => [slot.name, await readCodexSlotUsage(context.agentDir, slot.name)] as const),
+		pool.accounts.map(
+			async (slot) => [slot.name, await readCodexSlotUsage(context.agentDir, slot.name, cache)] as const,
+		),
 	);
-	return Object.fromEntries(entries);
+	const detail = Object.fromEntries(entries);
+	updatePool(context.agentDir, CODEX_POOL_PROVIDER_ID, (state) => ({
+		...state,
+		accounts: state.accounts.map((slot) => syncQuotaBlock(slot, detail[slot.name])),
+	}));
+	return detail;
 }
 
 export function codexProviderPackage(): ProviderPackage {
+	const caches = new Map<string, AccountUsageCache>();
+	const cacheFor = (agentDir: string) => {
+		const existing = caches.get(agentDir);
+		if (existing) return existing;
+		const created = createAccountUsageCache(agentDir, CODEX_POOL_PROVIDER_ID);
+		caches.set(agentDir, created);
+		return created;
+	};
+
 	return {
 		id: CODEX_POOL_PROVIDER_ID,
 		label: "OpenAI Codex (pool)",
-		enabled(env) {
+		enabled(env, context) {
 			// Opt-in: stock `openai-codex` already covers the single-account case,
-			// so this only registers when the user asks for pooling.
-			return env.SENPI_ACCOUNTS_CODEX_POOL === "1"
+			// so an empty pool stays hidden. Once a pool exists, registration is
+			// automatic and does not depend on a shell-specific environment export.
+			return env.SENPI_ACCOUNTS_CODEX_POOL === "1" ||
+				(context && readPool(context.agentDir, CODEX_POOL_PROVIDER_ID).accounts.length > 0)
 				? true
 				: "set SENPI_ACCOUNTS_CODEX_POOL=1 to enable the OpenAI Codex account pool";
 		},
@@ -377,10 +403,10 @@ export function codexProviderPackage(): ProviderPackage {
 			};
 		},
 		async accountUsageDetail(context) {
-			return readCodexPoolUsage(context);
+			return readCodexPoolUsage(context, cacheFor(context.agentDir));
 		},
 		async accountUsage(context) {
-			const detail = await readCodexPoolUsage(context);
+			const detail = await readCodexPoolUsage(context, cacheFor(context.agentDir));
 			return Object.fromEntries(Object.entries(detail).map(([name, usage]) => [name, headroomOf(usage)]));
 		},
 	};

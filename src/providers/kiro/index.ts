@@ -10,10 +10,12 @@ import {
 import type { AccountPoolState, MigrationPolicy } from "../../core/accounts.js";
 import { DEFAULT_SCHEDULING_MODE, type SchedulingMode } from "../../core/affinity.js";
 import { migrationSink } from "../../core/migration-sink.js";
-import { emptyPool, readPool, type StoredPool } from "../../core/store.js";
+import { emptyPool, readPool, type StoredPool, updatePool } from "../../core/store.js";
 import type { ProviderBuildContext, ProviderPackage } from "../../core/types.js";
+import { createAccountUsageCache, type AccountUsageCache } from "../../core/usage-detail-cache.js";
+import { type AccountUsage, clampFraction, headroomOf, syncQuotaBlock } from "../../core/usage-window.js";
 import { KIRO_AUTH_METHOD_LABELS, type KiroAuthMethod, KIRO_PROVIDER_ID } from "./config.js";
-import { fetchKiroUsage, type KiroTokens, loginKiro } from "./oauth.js";
+import { fetchKiroUsage, type KiroTokens, loginKiro, refreshKiro } from "./oauth.js";
 import {
 	buildKiroProviderConfig,
 	type KiroProviderDeps,
@@ -129,6 +131,61 @@ async function pickAccount(
 	});
 }
 
+async function readKiroPoolUsage(
+	context: ProviderBuildContext,
+	cache: AccountUsageCache,
+): Promise<Record<string, AccountUsage | undefined>> {
+	const pool = readPool(context.agentDir, KIRO_PROVIDER_ID);
+	const entries = await Promise.all(
+		pool.accounts.map(async (slot): Promise<readonly [string, AccountUsage | undefined]> => {
+			let tokens = slotToTokens(slot);
+			if (Date.now() >= slot.expires) {
+				try {
+					tokens = await refreshKiro(tokens);
+					updatePool(context.agentDir, KIRO_PROVIDER_ID, (state) => ({
+						...state,
+						accounts: state.accounts.map((candidate) =>
+							candidate.name === slot.name ? tokensToSlot(slot.name, tokens, slot.source) : candidate,
+						),
+					}));
+				} catch {
+					return [slot.name, undefined];
+				}
+			}
+
+			try {
+				const result = await cache.get(slot.name, tokens.access, async () => {
+					const usage = await fetchKiroUsage(tokens);
+					const detail: AccountUsage = {
+						windows:
+							usage.limitCount > 0
+								? [
+										{
+											label: "month",
+											usedFraction: clampFraction((usage.usedCount / usage.limitCount) * 100),
+											...(usage.resetAt === undefined ? {} : { resetsAt: usage.resetAt }),
+										},
+									]
+								: [],
+					};
+					if (usage.plan) detail.plan = usage.plan;
+					if (usage.email) detail.email = usage.email;
+					return detail;
+				});
+				return [slot.name, result];
+			} catch {
+				return [slot.name, undefined];
+			}
+		}),
+	);
+	const detail = Object.fromEntries(entries);
+	updatePool(context.agentDir, KIRO_PROVIDER_ID, (state) => ({
+		...state,
+		accounts: state.accounts.map((slot) => syncQuotaBlock(slot, detail[slot.name])),
+	}));
+	return detail;
+}
+
 /**
  * Menu-driven account manager. Every registration and removal path is reachable
  * from `/login kiro`, which is what makes native `/login` sufficient.
@@ -230,6 +287,15 @@ async function accountManager(agentDir: string, callbacks: LoginCallbacks): Prom
 }
 
 export function kiroProviderPackage(deps: KiroProviderDeps = {}): ProviderPackage {
+	const caches = new Map<string, AccountUsageCache>();
+	const cacheFor = (agentDir: string) => {
+		const existing = caches.get(agentDir);
+		if (existing) return existing;
+		const created = createAccountUsageCache(agentDir, KIRO_PROVIDER_ID);
+		caches.set(agentDir, created);
+		return created;
+	};
+
 	return {
 		id: KIRO_PROVIDER_ID,
 		label: "Kiro",
@@ -247,15 +313,12 @@ export function kiroProviderPackage(deps: KiroProviderDeps = {}): ProviderPackag
 				{ reportMigration: migrationSink.report, ...deps },
 			);
 		},
+		async accountUsageDetail(context) {
+			return readKiroPoolUsage(context, cacheFor(context.agentDir));
+		},
 		async accountUsage(context) {
-			const state = readPool(context.agentDir, KIRO_PROVIDER_ID);
-			// Shares readKiroHeadroom with routing so the dashboard and placement can
-			// never disagree, and so an expired token is refreshed rather than read as
-			// "unknown".
-			const entries = await Promise.all(
-				state.accounts.map(async (slot) => [slot.name, await readKiroHeadroom(slot)] as const),
-			);
-			return Object.fromEntries(entries);
+			const detail = await readKiroPoolUsage(context, cacheFor(context.agentDir));
+			return Object.fromEntries(Object.entries(detail).map(([name, usage]) => [name, headroomOf(usage)]));
 		},
 	};
 }

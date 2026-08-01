@@ -113,9 +113,6 @@ async function addonLines(
 ): Promise<ProviderUsageLine[]> {
 	const results = await Promise.all(
 		packages.map(async (entry): Promise<ProviderUsageLine[]> => {
-			const accounts = entry.readAccounts?.(context) ?? readPool(context.agentDir, entry.id).accounts;
-			if (accounts.length === 0) return [];
-
 			let detail: Record<string, AccountUsage | undefined> = {};
 			let headroom: Record<string, number | undefined> = {};
 			if (entry.accountUsageDetail) {
@@ -132,6 +129,11 @@ async function addonLines(
 				}
 			}
 
+			// Usage refreshes may persist quota blocks or rotated credentials. Read
+			// the pool afterward so the first report reflects that new routing state.
+			const accounts = entry.readAccounts?.(context) ?? readPool(context.agentDir, entry.id).accounts;
+			if (accounts.length === 0) return [];
+
 			const now = Date.now();
 			return accounts.map((slot) => {
 				const usage = detail[slot.name];
@@ -144,7 +146,9 @@ async function addonLines(
 					return { provider: entry.id, detail: `${label}${plan}: ${formatUsage(usage, now)} — ${state}` };
 				}
 				const left = typeof headroom[slot.name] === "number" ? `${percent(headroom[slot.name] as number)} remaining, ` : "";
-				return { provider: entry.id, detail: `${label}${plan}: ${left}${state}` };
+				const availability =
+					!usage && entry.accountUsageDetail ? `usage unavailable, ${state}` : `${left}${state}`;
+				return { provider: entry.id, detail: `${label}${plan}: ${availability}` };
 			});
 		}),
 	);

@@ -43,10 +43,10 @@
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "peerDependencies": {
-    "@code-yeongyu/senpi": ">=2026.7.28"
+    "@code-yeongyu/senpi": ">=2026.8.1"
   },
   "devDependencies": {
-    "@code-yeongyu/senpi": "^2026.7.29",
+    "@code-yeongyu/senpi": "^2026.8.1",
     "@types/node": "^24.13.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
