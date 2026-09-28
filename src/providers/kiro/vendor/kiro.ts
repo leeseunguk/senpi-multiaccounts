@@ -183,10 +183,12 @@ function mergeConstSchemas(left: unknown, right: unknown): unknown {
 function flattenObjectUnion(schema: JsonRecord, keyword: "anyOf" | "oneOf"): JsonRecord | undefined {
   const rawVariants = schema[keyword];
   if (!Array.isArray(rawVariants) || rawVariants.length === 0) return undefined;
-  if (!rawVariants.every((variant) => isRecord(variant) && variant.type === "object")) return undefined;
+  const isObjectVariant = (variant: unknown): variant is JsonRecord =>
+    isRecord(variant) && (variant.type === "object" || (variant.type === undefined && (isRecord(variant.properties) || Array.isArray(variant.required))));
+  if (!rawVariants.every(isObjectVariant)) return undefined;
 
   const variants = rawVariants as JsonRecord[];
-  const properties: JsonRecord = {};
+  const properties: JsonRecord = isRecord(schema.properties) ? { ...schema.properties } : {};
   for (const variant of variants) {
     const variantProperties = isRecord(variant.properties) ? variant.properties : {};
     for (const [name, propertySchema] of Object.entries(variantProperties)) {
@@ -207,6 +209,21 @@ function flattenObjectUnion(schema: JsonRecord, keyword: "anyOf" | "oneOf"): Jso
   };
 }
 
+function flattenPrimitiveUnion(schema: JsonRecord, keyword: "anyOf" | "oneOf"): JsonRecord | undefined {
+  const rawVariants = schema[keyword];
+  if (!Array.isArray(rawVariants) || rawVariants.length === 0) return undefined;
+  if (!rawVariants.every((variant) => isRecord(variant) && typeof variant.type === "string" && variant.type !== "object" && ("const" in variant || "enum" in variant))) return undefined;
+
+  const types = new Set(rawVariants.map((variant) => (variant as JsonRecord).type));
+  if (types.size !== 1) return undefined;
+  const values = rawVariants.flatMap((variant) => {
+    const record = variant as JsonRecord;
+    return Array.isArray(record.enum) ? record.enum : [record.const];
+  });
+  const { anyOf: _anyOf, oneOf: _oneOf, ...metadata } = schema;
+  return { ...metadata, type: [...types][0], enum: [...new Set(values)] };
+}
+
 export function sanitizeKiroToolSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(sanitizeKiroToolSchema);
   if (!isRecord(schema)) return schema;
@@ -216,7 +233,13 @@ export function sanitizeKiroToolSchema(schema: unknown): unknown {
       .filter(([key, value]) => key !== "additionalProperties" && !(key === "required" && Array.isArray(value) && value.length === 0))
       .map(([key, value]) => [key, sanitizeKiroToolSchema(value)]),
   );
-  return flattenObjectUnion(sanitized, "anyOf") ?? flattenObjectUnion(sanitized, "oneOf") ?? sanitized;
+  return (
+    flattenObjectUnion(sanitized, "anyOf") ??
+    flattenObjectUnion(sanitized, "oneOf") ??
+    flattenPrimitiveUnion(sanitized, "anyOf") ??
+    flattenPrimitiveUnion(sanitized, "oneOf") ??
+    sanitized
+  );
 }
 
 function toolSchemaForRequest(tool: Tool): unknown {
