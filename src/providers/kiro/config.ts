@@ -86,6 +86,7 @@ function model(id: string, name: string, contextWindow: number, input: ("text" |
  */
 export const KIRO_MODELS: KiroModel[] = [
 	model("auto", "Auto (Kiro)", 1_000_000),
+	model("claude-opus-5.5", "Claude Opus 5.5 (Kiro)", 1_000_000),
 	model("claude-opus-5", "Claude Opus 5 (Kiro)", 1_000_000),
 	model("claude-sonnet-5", "Claude Sonnet 5 (Kiro)", 1_000_000),
 	model("claude-opus-4.8", "Claude Opus 4.8 (Kiro)", 1_000_000),
